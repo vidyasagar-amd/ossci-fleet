@@ -1,0 +1,18 @@
+# Example Persistent Volume Claim
+# FIXME: Customize this for your cluster's storage configuration
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  # FIXME: Replace with your PVC name (must match vscode-session.yml)
+  name: your-pvc-name
+  # FIXME: Update namespace to match vscode-session.yml
+  namespace: rocm-dev
+spec:
+  accessModes:
+    - ReadWriteMany  # Allows multiple pods to access
+  # FIXME: Update storage class name based on your cluster
+  storageClassName: your-storage-class-name
+  resources:
+    requests:
+      # FIXME: Adjust storage size as needed
+      storage: 500Gi

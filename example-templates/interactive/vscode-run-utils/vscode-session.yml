@@ -1,0 +1,118 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  # FIXME: Replace 'yourname' with your username
+  name: vscode-statefulset-yourname
+  # FIXME: Update namespace if different
+  namespace: rocm-dev
+spec:
+  serviceName: "vscode-service"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vscode-session
+  template:
+    metadata:
+      labels:
+        app: vscode-session
+    spec:
+      volumes:
+      - name: vscode-vol
+        persistentVolumeClaim:
+          # FIXME: Update to match your PVC name
+          claimName: your-pvc-name
+      containers:
+      - name: interactive-shell
+        # FIXME: Update to your preferred Docker image if needed
+        image: rocm/composable_kernel:ck_ub24.04_rocm7.0.1_amd-mainline
+        command:
+          - /bin/bash
+          - -c
+          - |
+            # Print Pod IP Address
+            echo "========================================" && \
+            echo "Pod IP Address: $(hostname -i)" && \
+            echo "SSH Access: ssh sshuser@$(hostname -i) -p 22" && \
+            echo "Authentication: SSH Key Only (password disabled)" && \
+            echo "========================================" && \
+            
+            # Update package list
+            apt-get update && \
+            
+            # Install required packages
+            apt-get install -y openssh-server sudo git curl && \
+            
+            # Install GitHub CLI
+            (type -p wget >/dev/null || (apt-get update && apt-get install wget -y)) && \
+            mkdir -p -m 755 /etc/apt/keyrings && \
+            wget -qO- https://cli.github.com/packages/githubcli-archive-keyring.gpg | tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null && \
+            chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg && \
+            echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | tee /etc/apt/sources.list.d/github-cli.list > /dev/null && \
+            apt-get update && \
+            apt-get install gh -y && \
+            
+            # Create SSH directory and set permissions
+            mkdir -p /var/run/sshd && \
+            chmod 755 /var/run/sshd && \
+            
+            # Store host keys in persistent volume
+            mkdir -p /workspace/.ssh/host_keys && \
+            
+            # Copy existing host keys from persistent volume if they exist
+            if [ -f /workspace/.ssh/host_keys/ssh_host_rsa_key ]; then \
+              echo "📋 Restoring SSH host keys from persistent volume..." && \
+              cp /workspace/.ssh/host_keys/ssh_host_* /etc/ssh/ && \
+              chmod 600 /etc/ssh/ssh_host_*_key && \
+              chmod 644 /etc/ssh/ssh_host_*_key.pub; \
+            else \
+              echo "🔑 Generating new SSH host keys..." && \
+              ssh-keygen -A && \
+              echo "💾 Backing up SSH host keys to persistent volume..." && \
+              cp /etc/ssh/ssh_host_* /workspace/.ssh/host_keys/; \
+            fi && \
+            
+            # Create a user without home directory
+            useradd -M -s /bin/bash sshuser && \
+            
+            # Modify /etc/passwd to set home directory to /workspace (simple string replacement)
+            sed -i 's#/home/sshuser#/workspace#g' /etc/passwd && \
+            
+            # Add sshuser to sudo group and configure passwordless sudo
+            usermod -aG sudo sshuser && \
+            echo 'sshuser ALL=(ALL) NOPASSWD:ALL' >> /etc/sudoers && \
+            
+            # Set ownership and permissions of /workspace directory to sshuser
+            chown -R sshuser:sshuser /workspace && \
+            chmod 755 /workspace && \
+            chmod -R 755 /workspace/.ssh 2>/dev/null || true && \
+            
+            # Set up SSH directory for sshuser in their home directory (/workspace)
+            mkdir -p /workspace/.ssh && \
+            chmod 700 /workspace/.ssh && \
+            
+            # Create authorized_keys file (you can add your public key here)
+            touch /workspace/.ssh/authorized_keys && \
+            chmod 600 /workspace/.ssh/authorized_keys && \
+            
+            # Set proper ownership for SSH files
+            chown -R sshuser:sshuser /workspace/.ssh && \
+            
+            # Configure SSH (password authentication disabled for security)
+            echo "PermitRootLogin no" >> /etc/ssh/sshd_config && \
+            echo "PasswordAuthentication no" >> /etc/ssh/sshd_config && \
+            echo "PubkeyAuthentication yes" >> /etc/ssh/sshd_config && \
+            echo "Port 22" >> /etc/ssh/sshd_config && \
+            
+            # Start SSH daemon in foreground to keep container running
+            /usr/sbin/sshd -D
+        tty: true
+        stdin: true
+        volumeMounts:
+          - name: vscode-vol
+            # Persistent volume mounted at /workspace (home directory for sshuser)
+            mountPath: /workspace
+            readOnly: false
+        resources:
+          # FIXME: Adjust GPU count as needed
+          limits:
+            amd.com/gpu: 1
